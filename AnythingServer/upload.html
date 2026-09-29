@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AnythingLLM 文档上传</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%233b82f6' d='M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4z'/></svg>">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    background: #f3f5f9; color: #1f2937;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 24px;
+  }
+  .card {
+    background: #fff; width: 100%; max-width: 440px;
+    border-radius: 12px; padding: 28px; box-shadow: 0 4px 20px rgba(0,0,0,.08);
+  }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  p.sub { color: #6b7280; font-size: 14px; margin-bottom: 20px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
+  input[type=text], select {
+    width: 100%; padding: 8px 10px; border: 1px solid #d1d5db;
+    border-radius: 6px; font-size: 16px; outline: none; background: #fff;
+  }
+  input[type=text]:focus, select:focus { border-color: #3b82f6; }
+  input[type=file] {
+    width: 100%; padding: 10px; border: 1px dashed #cbd5e1;
+    border-radius: 6px; font-size: 13px; background: #fafbfc;
+  }
+  button {
+    width: 100%; margin-top: 22px; padding: 12px;
+    background: #3b82f6; color: #fff; border: none; border-radius: 6px;
+    font-size: 15px; min-height: 44px; cursor: pointer;
+  }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+  #result { margin-top: 16px; font-size: 13px; word-break: break-all; }
+  .ok { color: #15803d; } .err { color: #b91c1c; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>AnythingLLM 文档上传</h1>
+    <p class="sub">上传到工作区并自动完成向量化嵌入</p>
+    <form id="form">
+      <label for="file">文件</label>
+      <input type="file" id="file" required>
+      <label for="workspace">目标工作区</label>
+      <select id="workspace" required></select>
+      <label for="title">标题（可选）</label>
+      <input type="text" id="title" placeholder="文档标题">
+      <label for="author">作者（可选）</label>
+      <input type="text" id="author" placeholder="作者名">
+      <label for="desc">描述（可选）</label>
+      <input type="text" id="desc" placeholder="一句话描述">
+      <button type="submit" id="btn">上传</button>
+    </form>
+    <div id="result"></div>
+  </div>
+<script>
+  const API = "http://localhost:3001/api/v1";
+  const API_KEY = "4TVTJEJ-8TTMY49-QZ8DVMW-5EBZ7E7";
+  const form = document.getElementById("form");
+  const btn = document.getElementById("btn");
+  const result = document.getElementById("result");
+  const wsSelect = document.getElementById("workspace");
+  const authHeaders = { Authorization: "Bearer " + API_KEY };
+
+  async function loadWorkspaces() {
+    try {
+      const res = await fetch(API + "/workspaces", { headers: authHeaders });
+      const data = await res.json();
+      const list = data.workspaces || [];
+      if (!list.length) {
+        result.className = "err";
+        result.textContent = "服务器上没有可用工作区";
+        btn.disabled = true;
+        return;
+      }
+      wsSelect.innerHTML = list.map(w =>
+        `<option value="${w.slug}">${w.name}</option>`).join("");
+    } catch (err) {
+      result.className = "err";
+      result.textContent = "获取工作区失败：" + err.message;
+    }
+  }
+  loadWorkspaces();
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById("file");
+    if (!fileInput.files.length || !wsSelect.value) return;
+    const fd = new FormData();
+    fd.append("file", fileInput.files[0]);
+    fd.append("addToWorkspaces", wsSelect.value);
+    const meta = {};
+    const title = document.getElementById("title").value.trim();
+    const author = document.getElementById("author").value.trim();
+    const desc = document.getElementById("desc").value.trim();
+    if (title) meta.title = title;
+    if (author) meta.docAuthor = author;
+    if (desc) meta.description = desc;
+    if (Object.keys(meta).length) {
+      fd.append("metadata", new Blob([JSON.stringify(meta)], { type: "application/json" }));
+    }
+    btn.disabled = true;
+    btn.textContent = "上传中…";
+    result.className = "";
+    result.textContent = "";
+    try {
+      const res = await fetch(API + "/document/upload", {
+        method: "POST",
+        headers: authHeaders,
+        body: fd
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!(res.ok && data.success)) {
+        result.className = "err";
+        result.textContent = "上传失败（HTTP " + res.status + "）：" + (data.error || JSON.stringify(data));
+        return;
+      }
+      const names = (data.documents || []).map(d => d.title || d.name || d.id).join("、");
+      btn.textContent = "正在嵌入…";
+      const eres = await fetch(API + "/workspace/" + wsSelect.value + "/update-embeddings", {
+        method: "POST",
+        headers: Object.assign({}, authHeaders, { "Content-Type": "application/json" }),
+        body: "{}"
+      });
+      result.className = "ok";
+      result.textContent = eres.ok
+        ? "上传成功，已加入工作区并完成嵌入：" + names
+        : "上传成功，已加入工作区，但嵌入触发失败（HTTP " + eres.status + "）：" + names;
+    } catch (err) {
+      result.className = "err";
+      result.textContent = "请求出错：" + err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "上传";
+    }
+  });
+</script>
+</body>
+</html>
