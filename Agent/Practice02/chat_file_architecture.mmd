@@ -1,0 +1,40 @@
+flowchart TB
+    subgraph CFG["配置层"]
+        INI["config.ini<br/>base_url / api_key / model"] --> PARSER["configparser 读取配置"]
+    end
+
+    subgraph TOOL_DECL["工具声明层"]
+        TD["tools 列表（12 个 function call 定义）<br/>getDate · isLeapYear · getCwd · listDir · getFileType<br/>readFile · createFile · editFile · createDir<br/>deleteDir · deleteFile · rename"]
+    end
+
+    subgraph IMPL["工具实现层（TOOL_IMPL 映射）"]
+        direction LR
+        I1["get_date<br/>subprocess 调用本地 date 命令"]
+        I2["is_leap_year<br/>Python 闰年算法"]
+        I3["get_cwd<br/>os.getcwd"]
+        I4["list_dir<br/>os.listdir"]
+        I5["get_file_type<br/>os.path + mimetypes + EXT_TYPES"]
+        I6["read_file<br/>UTF-8 / GBK 文本读取"]
+        I7["create_file<br/>open 创建空文件"]
+        I8["edit_file<br/>overwrite / append"]
+        I9["create_dir<br/>os.makedirs"]
+        I10["delete_dir<br/>shutil.rmtree"]
+        I11["delete_file<br/>os.remove"]
+        I12["rename<br/>os.rename"]
+    end
+
+    subgraph ENGINE["对话执行引擎"]
+        IN["用户输入 input()"] --> APPEND["messages.append 用户消息"]
+        APPEND --> SC["stream_chat()<br/>requests.post 流式请求<br/>SSE 逐行解析 delta"]
+        SC --> DETECT{"模型返回 tool_calls？"}
+        DETECT -- "否" --> FIN["追加 assistant 内容<br/>本轮结束"]
+        DETECT -- "是" --> ASS["追加 assistant.tool_calls 到历史"]
+        ASS --> RUN["遍历工具调用<br/>json.loads 解析参数"]
+        RUN --> TR["执行工具并追加 role=tool 结果"]
+        TR --> SC
+    end
+
+    PARSER --> SC
+    TD --> SC
+    RUN -->|"TOOL_IMPL[name](**args)"| IMPL
+    IMPL -->|"返回结果文本"| TR
